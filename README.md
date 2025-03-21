@@ -18,12 +18,12 @@ This project is a TypeScript application designed to download PDF files from a l
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/week-4-pdf.git
+   git clone https://github.com/kompost/week-4-pdf-downloader.git
    ```
 
 2. Navigate to the project directory:
    ```bash
-   cd week-4-pdf
+   cd week-4-pdf-downloader
    ```
 
 3. Install the dependencies:
