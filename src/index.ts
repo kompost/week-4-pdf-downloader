@@ -1,7 +1,7 @@
 import { readExcelFile, saveExcelFile } from './excelHandler'
 import { join } from 'path'
 import { downloadPdf, saveFile } from './downloader'
-import { from, mergeMap, catchError, EMPTY } from 'rxjs'
+import { from, mergeMap, catchError, EMPTY, of } from 'rxjs'
 
 
 const filePathGRI = join(__dirname, '../data/GRI_2017_2020 (1).xlsx')
@@ -33,45 +33,67 @@ Promise
             downloadList.set(brNumber, { url1, url2, isDownloaded: 'no' })
         })
 
-        // Match all the records to see if they need download
+        // Match all the records to see if they need download or be skipped
         metaWorksheet.eachRow(row => {
             const brNumber = row.getCell('A').value as string
-            const isDownloaded = row.getCell('AT').value as string
 
-            // if the file does not exists in the downloadlist, it needs to be downloaded
+            // if the file is logged, remove it from the download list
             const record = downloadList.get(brNumber)
-            if (!record)
-                return
-
-            downloadList.set(brNumber, { ...record, isDownloaded: isDownloaded === 'yes' ? 'yes' : 'no' })
+            if (record)
+                downloadList.delete(brNumber)
         })
 
-        const observable = from(downloadList).pipe(
+        from(downloadList).pipe(
             mergeMap(([key, { url1, url2 }]) =>
                 downloadPdf(url1).pipe(
                     catchError(err => {
-                        console.error(`Failed to download from primary URL: ${err.message}`)
-                        return downloadPdf(url2)
+                        console.error(`Primary url: ${err.message}`);
+                        return downloadPdf(url2).pipe(
+                            catchError(err => {
+                                console.error(`Secondary url: ${err.message}`);
+                                const lastRow = metaWorksheet.lastRow!.number + 1;
+                                const row = metaWorksheet.getRow(lastRow);
+                                row.getCell('A').value = key;  // Set column A
+                                row.getCell('AT').value = 'no'; // Set column AT
+                                row.commit();
+                                return from(saveExcelFile(metaDataWorkbook, filePathMetaData)).pipe(
+                                    catchError(saveErr => {
+                                        console.error(`Failed to save Excel file: ${saveErr.message}`);
+                                        return EMPTY;
+                                    }),
+                                    mergeMap(() => EMPTY) // Ensure EMPTY is returned
+                                );
+                            })
+                        );
                     }),
                     mergeMap(pdfBuffer =>
                         saveFile(pdfBuffer, `./downloads/${key}.pdf`).pipe(
                             catchError(err => {
-                                console.error(`Failed to save file for ${key}: ${err.message}`)
-                                return EMPTY // Skip this file but continue processing others
+                                console.error(`Failed to save file for ${key}: ${err.message}`);
+                                return EMPTY; // Skip this file but continue processing others
+                            }),
+                            mergeMap(() => {
+                                const lastRow = metaWorksheet.lastRow!.number + 1;
+                                const row = metaWorksheet.getRow(lastRow);
+                                row.getCell('A').value = key;  // Set column A
+                                row.getCell('AT').value = 'yes'; // Set column AT
+                                row.commit();
+                                return from(saveExcelFile(metaDataWorkbook, filePathMetaData)).pipe(
+                                    catchError(saveErr => {
+                                        console.error(`Failed to save Excel file: ${saveErr.message}`);
+                                        return EMPTY;
+                                    }),
+                                    mergeMap(() => of('tihi')) // Ensure EMPTY is returned
+                                );
                             })
                         )
-                    ),
-                    catchError(err => {
-                        console.error(`Failed to download from fallback URL: ${err.message}`)
-                        return EMPTY // Skip this entry but continue processing others
-                    })
-                ), 9) // Limit concurrent downloads
-        )
-
-        observable.subscribe({
+                    )
+                ),
+                3) // Limit concurrent downloads
+        ).subscribe({
             next: result => console.log(result),
             complete: () => console.log('All records processed')
-        })
+        });
     })
     .catch(err => console.error(err))
 
