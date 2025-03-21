@@ -1,6 +1,7 @@
-import { readExcelFile, saveExcelFile } from './excelHandler'
+import { readExcelFile } from './excelHandler'
 import { join } from 'path'
-import { downloadPdf, saveFile } from './downloader'
+import save from './save'
+import download from './download'
 import { from, mergeMap, catchError, EMPTY, of } from 'rxjs'
 
 
@@ -12,6 +13,8 @@ const sheetNameMetaData = 'Metadata2006_2016'
 
 const GRI = readExcelFile(filePathGRI)
 const metaData = readExcelFile(filePathMetaData)
+
+const concurrency_limit = 75;
 
 Promise
     .all([GRI, metaData])
@@ -45,51 +48,43 @@ Promise
 
         from(downloadList).pipe(
             mergeMap(([key, { url1, url2 }]) =>
-                downloadPdf(url1).pipe(
+                download(url1).pipe(
                     catchError(err => {
-                        console.error(`Primary url: ${err.message}`);
-                        return downloadPdf(url2).pipe(
+                        console.error(`primary url error: ${err.message}`);
+                        return download(url2).pipe(
                             catchError(err => {
-                                console.error(`Secondary url: ${err.message}`);
-                                const lastRow = metaWorksheet.lastRow!.number + 1;
-                                const row = metaWorksheet.getRow(lastRow);
-                                row.getCell('A').value = key;  // Set column A
-                                row.getCell('AT').value = 'no'; // Set column AT
-                                row.commit();
-                                return from(saveExcelFile(metaDataWorkbook, filePathMetaData)).pipe(
-                                    catchError(saveErr => {
-                                        console.error(`Failed to save Excel file: ${saveErr.message}`);
-                                        return EMPTY;
-                                    }),
-                                    mergeMap(() => EMPTY) // Ensure EMPTY is returned
-                                );
-                            })
-                        );
-                    }),
-                    mergeMap(pdfBuffer =>
-                        saveFile(pdfBuffer, `./downloads/${key}.pdf`).pipe(
-                            catchError(err => {
-                                console.error(`Failed to save file for ${key}: ${err.message}`);
-                                return EMPTY; // Skip this file but continue processing others
-                            }),
-                            mergeMap(() => {
-                                const lastRow = metaWorksheet.lastRow!.number + 1;
-                                const row = metaWorksheet.getRow(lastRow);
-                                row.getCell('A').value = key;  // Set column A
-                                row.getCell('AT').value = 'yes'; // Set column AT
-                                row.commit();
-                                return from(saveExcelFile(metaDataWorkbook, filePathMetaData)).pipe(
-                                    catchError(saveErr => {
-                                        console.error(`Failed to save Excel file: ${saveErr.message}`);
-                                        return EMPTY;
-                                    }),
-                                    mergeMap(() => of('tihi')) // Ensure EMPTY is returned
-                                );
+                                console.error(`secondary url: ${err.message}`);
+                                return EMPTY;
+                                // const lastRow = metaWorksheet.lastRow!.number + 1;
+                                // const row = metaWorksheet.getRow(lastRow);
+                                // row.getCell('A').value = key;  // Set column A
+                                // row.getCell('AT').value = 'no'; // Set column AT
+                                // row.commit();
+                                // return saveExcelFileObservable(metaDataWorkbook, filePathMetaData).pipe(
+                                //     catchError(saveErr => EMPTY),
+                                //     mergeMap(() => EMPTY) // Ensure EMPTY is returned
+                                // );
                             })
                         )
+                    }),
+                    mergeMap(pdfBuffer =>
+                        save(pdfBuffer, `./downloads/${key}.pdf`).pipe(
+                            catchError(err => EMPTY),
+                            // mergeMap(_ => {
+                            //     const lastRow = metaWorksheet.lastRow!.number + 1;
+                            //     const row = metaWorksheet.getRow(lastRow);
+                            //     row.getCell('A').value = key;  // Set column A
+                            //     row.getCell('AT').value = 'yes'; // Set column AT
+                            //     row.commit();
+                            //     return from(saveExcelFile(metaDataWorkbook, filePathMetaData)).pipe(
+                            //         catchError(_ => EMPTY),
+                            //         mergeMap((filepath) => of(`saved ${filepath}`)) // Ensure EMPTY is returned
+                            //     );
+                            // })
+                        ),
                     )
                 ),
-                3) // Limit concurrent downloads
+                concurrency_limit) // Limit concurrent downloads
         ).subscribe({
             next: result => console.log(result),
             complete: () => console.log('All records processed')
